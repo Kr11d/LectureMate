@@ -1,0 +1,45 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Tests / coverage / benchmarks
+TestResults/
+coverage*.xml
+*.coverage
+BenchmarkDotNet.Artifacts/
+
+# NuGet
+*.nupkg
+packages/
+project.lock.json
+
+# DocFX
+docs/_site/
+docs/api/
+
+# Local data and secrets
+*.db
+*.db-shm
+*.db-wal
+appsettings.*.local.json
+secrets.json
+.env
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
