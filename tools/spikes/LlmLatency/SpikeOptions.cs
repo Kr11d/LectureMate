@@ -23,7 +23,7 @@ internal sealed record SpikeOptions
 
     public bool AnthropicAdaptiveThinking { get; init; }
 
-    public string GeminiModel { get; init; } = "gemini-3.5-flash-lite";
+    public string GeminiModel { get; init; } = "gemini-3.6-flash";
 
     public string GeminiThinkingLevel { get; init; } = "minimal";
 
@@ -44,7 +44,7 @@ internal sealed record SpikeOptions
           --openai-effort none|low|...       reasoning effort (default: none)
           --anthropic-model ID               (default: claude-haiku-5-5)
           --anthropic-thinking disabled|adaptive  (default: disabled)
-          --gemini-model ID                  (default: gemini-3.5-flash-lite)
+          --gemini-model ID                  (default: gemini-3.6-flash)
           --gemini-thinking minimal|low|...  thinking level (default: minimal)
           --delay-ms N                       pause after each request (default: 0)
           --materials PATH                   *.md folder or a single file (default: data/)

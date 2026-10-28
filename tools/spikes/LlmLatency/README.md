@@ -31,7 +31,7 @@ Gemini викликається напряму через `HttpClient` (`streamG
 | Кеш | Gemini і OpenAI кешують префікс автоматично (`cachedContentTokenCount`, `cached_tokens`); в Anthropic `cache_control` стоїть на блоці матеріалів (`cache_read_input_tokens`, `cache_creation_input_tokens`) |
 | NO_Q | Скільки відповідей дорівнюють `NO_QUESTION`. Усі питання справжні, тож очікуємо 0 |
 
-Моделі за замовчуванням (перевірено в документації 28.10.2026): `gemini-3.5-flash-lite` з `thinkingLevel: minimal` (повністю вимкнути thinking у Gemini 3.x не можна), `gpt-6-luna` з `reasoning_effort: none` і `claude-haiku-5-5` з вимкненим thinking. OpenAI і Anthropic коштують однаково, $0,10 / $0,50 за 1 млн вхідних / вихідних токенів.
+Моделі за замовчуванням (перевірено в документації 28.10.2026): `gemini-3.6-flash` з `thinkingLevel: minimal` (повністю вимкнути thinking у Gemini 3.x не можна; `gemini-3.5-flash-lite` у першому прогоні не влучав у кеш і раз помилково відповів `NO_QUESTION`), `gpt-6-luna` з `reasoning_effort: none` і `claude-haiku-5-5` з вимкненим thinking. OpenAI і Anthropic коштують однаково, $0,10 / $0,50 за 1 млн вхідних / вихідних токенів.
 
 Безкоштовний рівень Gemini має ліміти запитів за хвилину і в години пікового навантаження відповідає `503 UNAVAILABLE`. Такі відповіді рахуються як помилки (стовпець `ok/n`), а не повторюються, бо частка збоїв теж є результатом спайку. `--delay-ms` додає паузу після кожного запиту. Google може використовувати дані безкоштовного рівня для покращення своїх моделей, тож справжні матеріали курсу й транскрипти лекцій туди краще не надсилати.
 
