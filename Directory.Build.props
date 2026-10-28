@@ -1,0 +1,17 @@
+<Project>
+
+  <PropertyGroup>
+    <LangVersion>14</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Missing XML docs are reported only in src projects (see below). -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$(MSBuildProjectDirectory.Contains('\src\'))">
+    <NoWarn>$(NoWarn.Replace('CS1591', ''))</NoWarn>
+  </PropertyGroup>
+
+</Project>
