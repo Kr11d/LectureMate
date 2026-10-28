@@ -43,3 +43,12 @@ secrets.json
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# STT spike: lecture recordings and results stay local
+spike/**/out/
+spike/**/*.wav
+spike/**/*.mp3
+spike/**/*.m4a
+spike/**/*.ogg
+spike/**/*.flac
+__pycache__/
