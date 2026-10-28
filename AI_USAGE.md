@@ -5,4 +5,4 @@
 | Дата | Хто | Інструмент | Задача / промпт | Що згенеровано | Що змінено вручну |
 |---|---|---|---|---|---|
 | 2026-10-27 | | Claude Code | «Створи репозиторій і заповни його для цього проєкту» | README.md, .gitignore, .gitattributes, .editorconfig, шаблони ELEMENTS.md, LIBRARIES.md, RETROSPECTIVE.md, AI_USAGE.md | — |
-| 2026-10-28 | A | Claude Code | Спайк STT (M0): скрипт порівняння Soniox / Deepgram / OpenAI на записі лекції | `spike/stt/stt_spike.py`, правила `.gitignore` для записів і результатів спайку | — |
+| 2026-10-28 | A | Claude Code | Спайк STT (M0): скрипт перевірки якості Soniox на записі лекції; запис рішення в ретроспективу | `spike/stt/stt_spike.py`, правила `.gitignore` для записів і результатів спайку, розділ «Спайк M0» у `RETROSPECTIVE.md` | — |

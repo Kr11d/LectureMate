@@ -1,19 +1,16 @@
-"""STT spike (HANDOFF 8.2, M0): run one lecture recording through Soniox, Deepgram and OpenAI.
+"""STT spike (HANDOFF 8.2, M0): check Soniox quality on a real Ukrainian lecture recording.
 
 Not part of the app. Uses only the Python standard library (3.10+); ffmpeg is optional.
 
 Usage:
-    python spike/stt/stt_spike.py lecture.m4a [--reference reference.txt] [--providers soniox deepgram openai]
+    python spike/stt/stt_spike.py lecture.m4a [--reference reference.txt] [--model stt-async-v3]
 
-API keys are read from environment variables only:
-    SONIOX_API_KEY, DEEPGRAM_API_KEY, OPENAI_API_KEY
-A provider without a key is skipped.
+The API key is read from the SONIOX_API_KEY environment variable only.
 
 If ffmpeg is on PATH, the recording is first converted to the pipeline format
-(16 kHz, mono, PCM16 WAV): every provider then gets the same input, and 10 minutes
-fit the 25 MB OpenAI upload limit.
+(16 kHz, mono, PCM16 WAV), the same audio the app will send.
 
-Results go to spike/stt/out/<recording name>/: one <provider>.txt per provider and summary.md.
+Results go to spike/stt/out/<recording name>/: soniox.txt and summary.md.
 With --reference (a hand-checked transcript of the same audio) the summary also shows WER.
 Neither the recording nor the results are committed (see .gitignore).
 """
@@ -33,21 +30,13 @@ import unicodedata
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 
+BASE_URL = "https://api.soniox.com/v1"
 LANGUAGE = "uk"
-OPENAI_MAX_BYTES = 25 * 1024 * 1024
-SONIOX_POLL_SECONDS = 2
-SONIOX_TIMEOUT_SECONDS = 15 * 60
-
-
-@dataclass
-class Result:
-    provider: str
-    model: str
-    text: str
-    seconds: float
+DEFAULT_MODEL = "stt-async-v3"
+POLL_SECONDS = 2
+TIMEOUT_SECONDS = 15 * 60
 
 
 # ---------- HTTP helpers ----------
@@ -71,94 +60,64 @@ def http_json(method: str, url: str, headers: dict[str, str], payload: object | 
     return json.loads(raw) if raw else {}
 
 
-def multipart(fields: dict[str, str], file_field: str, file_path: Path) -> tuple[bytes, str]:
+def multipart_file(field: str, file_path: Path) -> tuple[bytes, str]:
     boundary = uuid.uuid4().hex
-    parts: list[bytes] = []
-    for name, value in fields.items():
-        parts.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode("utf-8"))
-    parts.append(
-        f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; filename="{file_path.name}"\r\n'
-        f"Content-Type: application/octet-stream\r\n\r\n".encode("utf-8"))
-    parts.append(file_path.read_bytes())
-    parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
-    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
+    body = b"".join([
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{field}"; filename="{file_path.name}"\r\n'
+        f"Content-Type: application/octet-stream\r\n\r\n".encode("utf-8"),
+        file_path.read_bytes(),
+        f"\r\n--{boundary}--\r\n".encode("utf-8"),
+    ])
+    return body, f"multipart/form-data; boundary={boundary}"
 
 
-# ---------- Providers ----------
+# ---------- Soniox ----------
 
-def transcribe_soniox(audio: Path, key: str, model: str) -> str:
+def transcribe(audio: Path, key: str, model: str) -> str:
     """Async file API: upload -> create transcription -> poll -> fetch transcript -> clean up."""
-    base = "https://api.soniox.com/v1"
     auth = {"Authorization": f"Bearer {key}"}
 
-    body, content_type = multipart({}, "file", audio)
-    file_id = json.loads(http("POST", f"{base}/files", {**auth, "Content-Type": content_type}, body))["id"]
+    body, content_type = multipart_file("file", audio)
+    file_id = json.loads(http("POST", f"{BASE_URL}/files", {**auth, "Content-Type": content_type}, body))["id"]
     transcription_id = None
     try:
-        created = http_json("POST", f"{base}/transcriptions", auth,
+        created = http_json("POST", f"{BASE_URL}/transcriptions", auth,
                             {"model": model, "file_id": file_id, "language_hints": [LANGUAGE]})
         transcription_id = created["id"]
 
-        deadline = time.monotonic() + SONIOX_TIMEOUT_SECONDS
+        deadline = time.monotonic() + TIMEOUT_SECONDS
         while True:
-            status = http_json("GET", f"{base}/transcriptions/{transcription_id}", auth)
+            status = http_json("GET", f"{BASE_URL}/transcriptions/{transcription_id}", auth)
             if status.get("status") == "completed":
                 break
             if status.get("status") == "error":
-                raise RuntimeError(f"Soniox transcription failed: {status.get('error_message')}")
+                raise RuntimeError(f"transcription failed: {status.get('error_message')}")
             if time.monotonic() > deadline:
-                raise RuntimeError("Soniox transcription timed out")
-            time.sleep(SONIOX_POLL_SECONDS)
+                raise RuntimeError("transcription timed out")
+            time.sleep(POLL_SECONDS)
 
-        transcript = http_json("GET", f"{base}/transcriptions/{transcription_id}/transcript", auth)
+        transcript = http_json("GET", f"{BASE_URL}/transcriptions/{transcription_id}/transcript", auth)
         if "text" in transcript:
             return transcript["text"]
         return "".join(token["text"] for token in transcript.get("tokens", []))
     finally:
         if transcription_id:
-            _try_delete(f"{base}/transcriptions/{transcription_id}", auth)
-        _try_delete(f"{base}/files/{file_id}", auth)
+            _try_delete(f"{BASE_URL}/transcriptions/{transcription_id}", auth)
+        _try_delete(f"{BASE_URL}/files/{file_id}", auth)
 
 
 def _try_delete(url: str, headers: dict[str, str]) -> None:
     try:
         http("DELETE", url, headers)
     except Exception as error:  # cleanup only; the transcript is already fetched or the run already failed
-        print(f"  warning: cleanup failed: {error}", file=sys.stderr)
-
-
-def transcribe_deepgram(audio: Path, key: str, model: str) -> str:
-    url = (f"https://api.deepgram.com/v1/listen?model={model}&language={LANGUAGE}"
-           "&smart_format=true&punctuate=true")
-    headers = {"Authorization": f"Token {key}", "Content-Type": "application/octet-stream"}
-    response = json.loads(http("POST", url, headers, audio.read_bytes()))
-    return response["results"]["channels"][0]["alternatives"][0]["transcript"]
-
-
-def transcribe_openai(audio: Path, key: str, model: str) -> str:
-    size = audio.stat().st_size
-    if size > OPENAI_MAX_BYTES:
-        raise RuntimeError(f"file is {size / 2**20:.1f} MB, OpenAI accepts up to 25 MB; "
-                           "install ffmpeg or convert to 16 kHz mono WAV/MP3 first")
-    body, content_type = multipart({"model": model, "language": LANGUAGE, "response_format": "json"}, "file", audio)
-    headers = {"Authorization": f"Bearer {key}", "Content-Type": content_type}
-    return json.loads(http("POST", "https://api.openai.com/v1/audio/transcriptions", headers, body))["text"]
-
-
-PROVIDERS = {
-    # name: (function, env var, default model)
-    "soniox": (transcribe_soniox, "SONIOX_API_KEY", "stt-async-v3"),
-    "deepgram": (transcribe_deepgram, "DEEPGRAM_API_KEY", "nova-3"),
-    "openai": (transcribe_openai, "OPENAI_API_KEY", "gpt-4o-transcribe"),
-}
+        print(f"warning: cleanup failed: {error}", file=sys.stderr)
 
 
 # ---------- Audio ----------
 
 def prepare_audio(source: Path, work_dir: Path) -> Path:
     if shutil.which("ffmpeg") is None:
-        print("ffmpeg not found: sending the original file to every provider")
+        print("ffmpeg not found: sending the original file")
         return source
     target = work_dir / f"{source.stem}.16k-mono.wav"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(source),
@@ -198,53 +157,40 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("audio", type=Path, help="lecture recording (wav, mp3, m4a, ...)")
     parser.add_argument("--reference", type=Path, help="hand-checked transcript for WER")
-    parser.add_argument("--providers", nargs="+", choices=PROVIDERS, default=list(PROVIDERS))
-    for name, (_, _, model) in PROVIDERS.items():
-        parser.add_argument(f"--{name}-model", default=model, help=f"default: {model}")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Soniox async model (default: {DEFAULT_MODEL})")
     args = parser.parse_args()
 
     if not args.audio.is_file():
         parser.error(f"file not found: {args.audio}")
+    key = os.environ.get("SONIOX_API_KEY")
+    if not key:
+        parser.error("set the SONIOX_API_KEY environment variable")
     reference = args.reference.read_text(encoding="utf-8") if args.reference else None
 
     out_dir = Path(__file__).parent / "out" / args.audio.stem
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    results: list[Result] = []
-    errors: dict[str, str] = {}
     with tempfile.TemporaryDirectory() as work_dir:
         audio = prepare_audio(args.audio, Path(work_dir))
-        for name in args.providers:
-            function, env_var, _ = PROVIDERS[name]
-            model = getattr(args, f"{name}_model")
-            key = os.environ.get(env_var)
-            if not key:
-                print(f"{name}: skipped ({env_var} is not set)")
-                continue
-            print(f"{name} ({model}): transcribing...")
-            started = time.perf_counter()
-            try:
-                text = function(audio, key, model)
-            except Exception as error:
-                errors[name] = str(error)
-                print(f"  failed: {error}", file=sys.stderr)
-                continue
-            result = Result(name, model, text, time.perf_counter() - started)
-            results.append(result)
-            (out_dir / f"{name}.txt").write_text(text, encoding="utf-8")
-            print(f"  done in {result.seconds:.1f} s, {len(normalize(text))} words")
+        print(f"soniox ({args.model}): transcribing...")
+        started = time.perf_counter()
+        try:
+            text = transcribe(audio, key, args.model)
+        except Exception as error:
+            print(f"failed: {error}", file=sys.stderr)
+            return 1
+        seconds = time.perf_counter() - started
 
-    lines = [f"# STT spike: {args.audio.name}", "",
-             "| Provider | Model | Wall time, s | Words | WER |", "|---|---|---|---|---|"]
-    for r in results:
-        wer = f"{word_error_rate(reference, r.text):.1%}" if reference else "—"
-        lines.append(f"| {r.provider} | {r.model} | {r.seconds:.1f} | {len(normalize(r.text))} | {wer} |")
-    for name, message in errors.items():
-        lines.append(f"| {name} | — | failed | — | {message[:120]} |")
-    lines += ["", "Wall time is a whole-file (batch) request, not the streaming latency the app will see."]
-    (out_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"\nResults: {out_dir}")
-    return 0 if results else 1
+    (out_dir / "soniox.txt").write_text(text, encoding="utf-8")
+    words = len(normalize(text))
+    wer = f"{word_error_rate(reference, text):.1%}" if reference else "—"
+    summary = (f"# STT spike: {args.audio.name}\n\n"
+               "| Model | Wall time, s | Words | WER |\n|---|---|---|---|\n"
+               f"| {args.model} | {seconds:.1f} | {words} | {wer} |\n\n"
+               "Wall time is a whole-file (batch) request, not the streaming latency the app will see.\n")
+    (out_dir / "summary.md").write_text(summary, encoding="utf-8")
+    print(f"done in {seconds:.1f} s, {words} words\nResults: {out_dir}")
+    return 0
 
 
 if __name__ == "__main__":
