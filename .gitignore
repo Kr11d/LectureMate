@@ -22,6 +22,9 @@ coverage*.xml
 *.coverage
 BenchmarkDotNet.Artifacts/
 
+# Spike outputs (timings, answer texts)
+tools/spikes/*/out/
+
 # NuGet
 *.nupkg
 packages/
