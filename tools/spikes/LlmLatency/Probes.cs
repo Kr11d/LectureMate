@@ -1,5 +1,8 @@
 using System.Diagnostics;
+using System.Net.Http.Json;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Anthropic;
 using Anthropic.Models.Messages;
 using OpenAI.Chat;
@@ -153,5 +156,96 @@ internal sealed class AnthropicProbe(string apiKey, string model, bool adaptiveT
         // Anthropic reports uncached, cache-read and cache-write tokens separately.
         var totalInput = input + cacheRead + cacheWrite;
         return new ProbeResult(firstToken, Stopwatch.GetElapsedTime(start), totalInput, cacheRead, cacheWrite, output, answer.ToString());
+    }
+}
+
+/// <summary>
+/// Gemini API over plain HTTP (streamGenerateContent with SSE), so the spike needs no extra package.
+/// </summary>
+internal sealed class GeminiProbe(string apiKey, string model, string thinkingLevel) : IProviderProbe
+{
+    private readonly HttpClient _http = new() { BaseAddress = new Uri("https://generativelanguage.googleapis.com/v1beta/") };
+
+    public string Provider => "Gemini";
+
+    public string Model => model;
+
+    public async Task<ProbeResult> SendAsync(ProbeRequest request, CancellationToken ct)
+    {
+        // Gemini caches repeated prefixes implicitly (no marker); hits show up as cachedContentTokenCount.
+        var body = new JsonObject
+        {
+            ["systemInstruction"] = new JsonObject { ["parts"] = new JsonArray(new JsonObject { ["text"] = request.System }) },
+            ["contents"] = new JsonArray(new JsonObject
+            {
+                ["role"] = "user",
+                ["parts"] = new JsonArray(
+                    new JsonObject { ["text"] = request.CachedPrefix },
+                    new JsonObject { ["text"] = request.Prompt }),
+            }),
+            ["generationConfig"] = new JsonObject
+            {
+                ["maxOutputTokens"] = request.MaxTokens,
+                ["thinkingConfig"] = new JsonObject { ["thinkingLevel"] = thinkingLevel },
+            },
+        };
+
+        // The key goes in a header, not in the URL, so it never lands in proxy or HTTP logs.
+        using var message = new HttpRequestMessage(HttpMethod.Post, $"models/{model}:streamGenerateContent?alt=sse")
+        {
+            Content = JsonContent.Create(body),
+        };
+        message.Headers.Add("x-goog-api-key", apiKey);
+
+        var answer = new StringBuilder();
+        TimeSpan? firstToken = null;
+        long input = 0, cached = 0, output = 0;
+
+        var start = Stopwatch.GetTimestamp();
+        using var response = await _http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var error = await response.Content.ReadAsStringAsync(ct);
+            throw new HttpRequestException($"{(int)response.StatusCode}: {error[..Math.Min(error.Length, 300)]}", null, response.StatusCode);
+        }
+
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(ct));
+        while (await reader.ReadLineAsync(ct) is { } line)
+        {
+            if (!line.StartsWith("data: ", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            using var chunk = JsonDocument.Parse(line.AsMemory(6));
+            var root = chunk.RootElement;
+            if (root.TryGetProperty("candidates", out var candidates)
+                && candidates[0].TryGetProperty("content", out var content)
+                && content.TryGetProperty("parts", out var parts))
+            {
+                foreach (var part in parts.EnumerateArray())
+                {
+                    // Thought summaries are not answer text, so they do not count as the first token.
+                    var isThought = part.TryGetProperty("thought", out var thought) && thought.GetBoolean();
+                    if (!isThought && part.TryGetProperty("text", out var text) && text.GetString() is { Length: > 0 } fragment)
+                    {
+                        firstToken ??= Stopwatch.GetElapsedTime(start);
+                        answer.Append(fragment);
+                    }
+                }
+            }
+
+            if (root.TryGetProperty("usageMetadata", out var usage))
+            {
+                input = Count(usage, "promptTokenCount");
+                cached = Count(usage, "cachedContentTokenCount");
+                output = Count(usage, "candidatesTokenCount") + Count(usage, "thoughtsTokenCount");
+            }
+        }
+
+        return new ProbeResult(firstToken, Stopwatch.GetElapsedTime(start), input, cached, null, output, answer.ToString());
+
+        static long Count(JsonElement usage, string name) =>
+            usage.TryGetProperty(name, out var value) ? value.GetInt64() : 0;
     }
 }

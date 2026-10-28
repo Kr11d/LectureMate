@@ -4,9 +4,8 @@ namespace LlmLatency;
 
 internal sealed record SpikeOptions
 {
-    public bool RunOpenAi { get; init; } = true;
-
-    public bool RunAnthropic { get; init; } = true;
+    /// <summary>Providers to measure; each still needs its key in the environment.</summary>
+    public IReadOnlySet<string> Providers { get; init; } = new HashSet<string> { "gemini", "openai", "anthropic" };
 
     /// <summary>Runs per provider. Each run starts with a fresh prefix, so its first request is cold.</summary>
     public int Runs { get; init; } = 10;
@@ -24,13 +23,20 @@ internal sealed record SpikeOptions
 
     public bool AnthropicAdaptiveThinking { get; init; }
 
+    public string GeminiModel { get; init; } = "gemini-3.5-flash-lite";
+
+    public string GeminiThinkingLevel { get; init; } = "minimal";
+
+    /// <summary>Pause after each request, to stay within free-tier rate limits.</summary>
+    public TimeSpan Delay { get; init; }
+
     public string? MaterialsPath { get; init; }
 
     public bool DryRun { get; init; }
 
     public const string Usage = """
         Usage: dotnet run -- [options]
-          --provider both|openai|anthropic   (default: both)
+          --provider LIST                    comma-separated gemini,openai,anthropic (default: all with a key)
           --runs N                           runs per provider, each starts cold (default: 10)
           --warm N                           warm requests per run (default: 2)
           --max-tokens N                     (default: 400)
@@ -38,9 +44,12 @@ internal sealed record SpikeOptions
           --openai-effort none|low|...       reasoning effort (default: none)
           --anthropic-model ID               (default: claude-haiku-5-5)
           --anthropic-thinking disabled|adaptive  (default: disabled)
+          --gemini-model ID                  (default: gemini-3.5-flash-lite)
+          --gemini-thinking minimal|low|...  thinking level (default: minimal)
+          --delay-ms N                       pause after each request (default: 0)
           --materials PATH                   *.md folder or a single file (default: data/)
           --dry-run                          print the request layout, no network calls
-        Keys are read only from OPENAI_API_KEY and ANTHROPIC_API_KEY.
+        Keys are read only from GEMINI_API_KEY, OPENAI_API_KEY and ANTHROPIC_API_KEY.
         """;
 
     /// <summary>Parses command-line arguments; returns null when they are invalid or help is requested.</summary>
@@ -64,13 +73,7 @@ internal sealed record SpikeOptions
             var value = args[++i];
             options = name switch
             {
-                "--provider" => value switch
-                {
-                    "both" => options with { RunOpenAi = true, RunAnthropic = true },
-                    "openai" => options with { RunOpenAi = true, RunAnthropic = false },
-                    "anthropic" => options with { RunOpenAi = false, RunAnthropic = true },
-                    _ => null,
-                },
+                "--provider" => ParseProviders(value) is { } providers ? options with { Providers = providers } : null,
                 "--runs" => ParsePositive(value) is { } runs ? options with { Runs = runs } : null,
                 "--warm" => ParseNonNegative(value) is { } warm ? options with { WarmPerRun = warm } : null,
                 "--max-tokens" => ParsePositive(value) is { } max ? options with { MaxTokens = max } : null,
@@ -83,6 +86,9 @@ internal sealed record SpikeOptions
                     "adaptive" => options with { AnthropicAdaptiveThinking = true },
                     _ => null,
                 },
+                "--gemini-model" => options with { GeminiModel = value },
+                "--gemini-thinking" => options with { GeminiThinkingLevel = value },
+                "--delay-ms" => ParseNonNegative(value) is { } delay ? options with { Delay = TimeSpan.FromMilliseconds(delay) } : null,
                 "--materials" => options with { MaterialsPath = value },
                 _ => null,
             };
@@ -93,6 +99,12 @@ internal sealed record SpikeOptions
         }
 
         return options;
+    }
+
+    private static HashSet<string>? ParseProviders(string value)
+    {
+        var providers = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+        return providers.Count > 0 && providers.IsSubsetOf(["gemini", "openai", "anthropic"]) ? providers : null;
     }
 
     private static int? ParsePositive(string value) =>

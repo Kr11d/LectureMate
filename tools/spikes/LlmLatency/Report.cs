@@ -47,7 +47,7 @@ internal static class Report
     public static string FormatSummary(IReadOnlyList<Measurement> measurements)
     {
         var builder = new StringBuilder();
-        builder.AppendLine("provider   model              phase  ok/n   TTFT p50  TTFT p90  total p50  total p90  in tok  cache hits  NO_Q");
+        builder.AppendLine("provider   model                  phase  ok/n   TTFT p50  TTFT p90  total p50  total p90  in tok  cache hits  NO_Q");
         var groups = measurements
             .GroupBy(m => (m.Provider, m.Model, m.Phase))
             .OrderBy(g => g.Key.Provider, StringComparer.Ordinal)
@@ -61,7 +61,7 @@ internal static class Report
             var noQuestion = ok.Count(r => r.Answer.Trim() == Scenario.NoQuestionMarker);
             var input = ok.Count > 0 ? ok.Average(r => r.InputTokens) : 0;
 
-            builder.AppendLine(CultureInfo.InvariantCulture, $"{group.Key.Provider,-10} {group.Key.Model,-18} {group.Key.Phase,-5}  {ok.Count,2}/{group.Count(),-3} "
+            builder.AppendLine(CultureInfo.InvariantCulture, $"{group.Key.Provider,-10} {group.Key.Model,-22} {group.Key.Phase,-5}  {ok.Count,2}/{group.Count(),-3} "
                 + $"{Ms(Percentile(ttft, 0.5))} {Ms(Percentile(ttft, 0.9))} {Ms(Percentile(total, 0.5)),9} {Ms(Percentile(total, 0.9)),9} "
                 + $"{input,7:F0}  {hits,3}/{ok.Count,-6} {noQuestion,4}");
         }

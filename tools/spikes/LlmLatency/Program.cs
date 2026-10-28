@@ -34,19 +34,24 @@ if (options.DryRun)
 }
 
 var probes = new List<IProviderProbe>();
-if (options.RunOpenAi)
+if (options.Providers.Contains("gemini"))
+{
+    AddProbe("GEMINI_API_KEY", key => new GeminiProbe(key, options.GeminiModel, options.GeminiThinkingLevel));
+}
+
+if (options.Providers.Contains("openai"))
 {
     AddProbe("OPENAI_API_KEY", key => new OpenAiProbe(key, options.OpenAiModel, options.OpenAiReasoningEffort));
 }
 
-if (options.RunAnthropic)
+if (options.Providers.Contains("anthropic"))
 {
     AddProbe("ANTHROPIC_API_KEY", key => new AnthropicProbe(key, options.AnthropicModel, options.AnthropicAdaptiveThinking));
 }
 
 if (probes.Count == 0)
 {
-    Console.WriteLine("No provider to measure: set OPENAI_API_KEY and/or ANTHROPIC_API_KEY.");
+    Console.WriteLine("No provider to measure: set GEMINI_API_KEY, OPENAI_API_KEY and/or ANTHROPIC_API_KEY.");
     return 1;
 }
 
@@ -99,6 +104,10 @@ try
 
                 measurements.Add(measurement);
                 Console.WriteLine(Report.FormatLine(measurement));
+                if (options.Delay > TimeSpan.Zero)
+                {
+                    await Task.Delay(options.Delay, cts.Token);
+                }
             }
         }
     }
